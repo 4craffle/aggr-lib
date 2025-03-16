@@ -1,0 +1,98 @@
+// Session Volume Profile Indicator for aggr-lib
+export default {
+  name: 'SessionVolumeProfile',
+  description: 'Displays volume profile for a weekly session starting Monday 8am',
+  
+  // Indicator state
+  sessionStart: null,
+  sessionEnd: null,
+  minPrice: Infinity,
+  maxPrice: -Infinity,
+  bins: new Array(50).fill(0), // 50 bins for volume
+  numberOfBins: 50,
+  binSize: 0,
+  
+  // Helper function to get session start time
+  getSessionStart(currentTime) {
+    const date = new Date(currentTime);
+    const day = date.getDay(); // 0 = Sunday, 1 = Monday, etc.
+    const timeOfDay = date.getHours() * 3600 + date.getMinutes() * 60 + date.getSeconds();
+    const eightAM = 8 * 3600; // 8am in seconds
+    
+    let sessionStart = new Date(date);
+    const daysSinceMonday = (day - 1 + 7) % 7;
+    
+    if (day === 1 && timeOfDay >= eightAM) {
+      // Today is Monday after 8am
+      sessionStart.setHours(8, 0, 0, 0);
+    } else {
+      // Previous Monday
+      sessionStart.setDate(date.getDate() - daysSinceMonday - (day === 1 ? 7 : 0));
+      sessionStart.setHours(8, 0, 0, 0);
+    }
+    return sessionStart.getTime();
+  },
+  
+  // Initialize the indicator
+  init() {
+    const currentTime = Date.now();
+    this.sessionStart = this.getSessionStart(currentTime);
+    this.sessionEnd = this.sessionStart + 7 * 24 * 60 * 60 * 1000; // 7 days later
+    
+    // Load initial trades
+    const trades = getTrades(this.sessionStart, currentTime);
+    this.updateProfile(trades);
+    
+    // Set up histogram (assumed API)
+    this.histogram = createPaneSeries('histogram');
+    this.updateHistogram();
+  },
+  
+  // Update volume profile with trades
+  updateProfile(trades) {
+    trades.forEach(trade => {
+      this.minPrice = Math.min(this.minPrice, trade.price);
+      this.maxPrice = Math.max(this.maxPrice, trade.price);
+      
+      this.binSize = (this.maxPrice - this.minPrice) / this.numberOfBins;
+      if (this.binSize > 0) {
+        const binIndex = Math.floor((trade.price - this.minPrice) / this.binSize);
+        if (binIndex >= 0 && binIndex < this.numberOfBins) {
+          this.bins[binIndex] += trade.volume;
+        }
+      }
+    });
+  },
+  
+  // Update histogram display
+  updateHistogram() {
+    const histogramData = this.bins.map((volume, i) => ({
+      price: this.minPrice + i * this.binSize,
+      volume: volume
+    }));
+    this.histogram.setData(histogramData);
+  },
+  
+  // Update on new trades
+  update() {
+    const currentTime = Date.now();
+    const newTrades = getNewTrades(); // Assumed function for new trades
+    
+    for (const trade of newTrades) {
+      // Check for session reset
+      while (trade.timestamp > this.sessionEnd) {
+        this.sessionStart = this.sessionEnd;
+        this.sessionEnd = this.sessionStart + 7 * 24 * 60 * 60 * 1000;
+        this.bins.fill(0);
+        this.minPrice = Infinity;
+        this.maxPrice = -Infinity;
+      }
+      
+      // Add trade to profile
+      this.updateProfile([trade]);
+    }
+    
+    // Refresh display
+    this.updateHistogram();
+  }
+};
